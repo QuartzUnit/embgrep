@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "embgrep"
+version = "0.1.0"
+description = "Local semantic search — embedding-powered grep for files, zero external services."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "QuartzUnit" }]
+keywords = ["semantic-search", "embeddings", "grep", "rag", "local", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = ["fastembed>=0.4", "numpy>=1.24"]
+
+[project.optional-dependencies]
+mcp = ["fastmcp>=2.0"]
+cli = ["click>=8.0", "rich>=13.0"]
+all = ["embgrep[mcp,cli]"]
+dev = ["pytest>=8.0", "ruff>=0.8"]
+
+[project.urls]
+Homepage = "https://github.com/QuartzUnit/embgrep"
+Repository = "https://github.com/QuartzUnit/embgrep"
+
+[project.scripts]
+embgrep = "embgrep.__main__:main"
+embgrep-mcp = "embgrep.mcp_server:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
