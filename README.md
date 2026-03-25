@@ -1,5 +1,7 @@
 # embgrep
 
+> [한국어 문서](README.ko.md)
+
 **Local semantic search — embedding-powered grep for files, zero external services.**
 
 [![PyPI](https://img.shields.io/pypi/v/embgrep)](https://pypi.org/project/embgrep/)
@@ -157,4 +159,4 @@ Or with uvx:
 
 MIT
 
-<!-- mcp-name: io.github.ArkNill/embgrep -->
+<!-- mcp-name: io.github.QuartzUnit/embgrep -->
