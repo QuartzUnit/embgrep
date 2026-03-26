@@ -155,6 +155,10 @@ Or with uvx:
 | [feedkit](https://github.com/QuartzUnit/feedkit) | RSS feed collection + MCP |
 | **embgrep** | **Local semantic search for files** |
 
+## Used in
+
+- [newswatch](https://github.com/QuartzUnit/newswatch) — RSS news monitoring pipeline (feedkit → markgrab → embgrep → diffgrab)
+
 ## License
 
 MIT
