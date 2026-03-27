@@ -124,6 +124,16 @@ Or with uvx:
 
 ## How It Works
 
+```mermaid
+flowchart TD
+    A["📁 Files"] --> B["Smart Chunking\ncode: function-level\ndocs: heading-level"]
+    B --> C["fastembed\nlocal embeddings"]
+    C --> D["SQLite\nvector index"]
+    D --> E["🔍 Query"]
+    E --> F["Cosine Similarity\nranked results"]
+    F --> G["✅ Matches\nwith context"]
+```
+
 1. **Chunking** — Files are split into semantically meaningful chunks:
    - Code files (`.py`, `.js`, `.ts`, etc.): split by function/class boundaries
    - Documents (`.md`, `.txt`): split by headings or paragraph breaks
