@@ -1,0 +1,57 @@
+# embgrep
+
+> Local semantic search — embedding-powered grep for files, zero external services.
+
+## Purpose
+
+embgrep indexes local files into a SQLite database using fastembed vector embeddings and provides natural-language semantic search across the indexed content. It runs entirely offline with no external API calls, chunking files by logical sections and storing embeddings locally for fast cosine-similarity retrieval.
+
+## Capabilities
+
+- **File indexing**: Recursively index files by glob pattern, chunked with line-level tracking
+- **Semantic search**: Natural language queries ranked by cosine similarity against stored embeddings
+- **Incremental update**: Re-index only changed files via content hash comparison
+- **Index status**: Report file count, chunk count, size, and last update time
+- **MCP server**: 4 semantic search tools exposed via FastMCP (stdio transport)
+
+## Installation
+
+```
+pip install embgrep          # core (fastembed + numpy)
+pip install embgrep[cli]     # CLI (click + rich)
+pip install embgrep[mcp]     # MCP server (fastmcp)
+pip install embgrep[all]     # everything
+```
+
+## Quick Use
+
+### CLI
+
+```bash
+embgrep index ./docs --patterns "*.md,*.py"      # index files
+embgrep search "error handling patterns" -k 10   # semantic search
+embgrep status                                    # show index stats
+embgrep update                                    # incremental re-index
+```
+
+### Python
+
+```python
+from embgrep import EmbGrep
+
+eg = EmbGrep()
+eg.index("./docs", patterns=["*.md", "*.py"])
+results = eg.search("error handling", top_k=5)  # list[SearchResult]
+eg.close()
+```
+
+### MCP
+
+Server: `embgrep-mcp` (stdio transport)
+Tools: `index_directory`, `semantic_search`, `index_status`, `update_index`
+
+## Links
+
+- Docs: https://github.com/QuartzUnit/embgrep
+- PyPI: https://pypi.org/project/embgrep/
+- Source: https://github.com/QuartzUnit/embgrep
