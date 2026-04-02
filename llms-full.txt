@@ -1,0 +1,622 @@
+# embgrep
+
+> Local semantic search — embedding-powered grep for files, zero external services.
+
+## Purpose
+
+embgrep indexes local files into a SQLite database using fastembed vector embeddings and provides natural-language semantic search across the indexed content. It runs entirely offline with no external API calls, chunking files by logical sections (function/class boundaries, markdown headings, paragraph groups, or fixed-size fallback) and storing embeddings locally for fast cosine-similarity retrieval.
+
+## Capabilities
+
+- **File indexing**: Recursively index files by glob pattern, chunked with line-level tracking
+- **Semantic search**: Natural language queries ranked by cosine similarity against stored embeddings
+- **Incremental update**: Re-index only changed files via SHA-256 content hash comparison
+- **Index status**: Report file count, chunk count, size, and last update time
+- **Smart chunking**: Language-aware splitting for Python, JS, TS, Java, Go, Rust (function/class boundaries), Markdown (heading boundaries), plain text (blank-line paragraphs), and fixed-size fallback for config/shell files
+- **MCP server**: 4 semantic search tools exposed via FastMCP (stdio transport)
+- **Zero external services**: All embedding and storage is local (fastembed ONNX + SQLite)
+
+### Supported File Extensions
+
+- **Code**: `.py`, `.js`, `.ts`, `.java`, `.go`, `.rs`
+- **Documents**: `.md`, `.txt`
+- **Config**: `.yaml`, `.yml`, `.json`, `.toml`, `.cfg`, `.ini`
+- **Shell**: `.sh`, `.bash`
+
+## Installation
+
+```
+pip install embgrep          # core (fastembed + numpy)
+pip install embgrep[cli]     # CLI (click + rich)
+pip install embgrep[mcp]     # MCP server (fastmcp)
+pip install embgrep[all]     # everything
+```
+
+**Requirements**: Python >= 3.11
+
+**Core dependencies**: `fastembed>=0.4`, `numpy>=1.24`
+
+**Optional dependencies**:
+- `cli`: `click>=8.0`, `rich>=13.0`
+- `mcp`: `fastmcp>=2.0`
+- `dev`: `pytest>=8.0`, `ruff>=0.8`
+
+## Quick Use
+
+### CLI
+
+```bash
+embgrep index ./docs --patterns "*.md,*.py"      # index files
+embgrep search "error handling patterns" -k 10   # semantic search
+embgrep status                                    # show index stats
+embgrep update                                    # incremental re-index
+```
+
+### Python
+
+```python
+from embgrep import EmbGrep
+
+eg = EmbGrep()
+eg.index("./docs", patterns=["*.md", "*.py"])
+results = eg.search("error handling", top_k=5)  # list[SearchResult]
+eg.close()
+```
+
+### MCP
+
+Server: `embgrep-mcp` (stdio transport)
+Tools: `index_directory`, `semantic_search`, `index_status`, `update_index`
+
+## API Reference
+
+### Module-Level Functions (`embgrep`)
+
+These are convenience wrappers that create and close an `EmbGrep` instance internally.
+
+#### `embgrep.index(directory, patterns=None, db_path=None) -> dict`
+
+Index files in a directory.
+
+**Parameters**:
+- `directory` (`str`): Path to the directory to index.
+- `patterns` (`list[str] | None`): Optional list of glob patterns to filter files (e.g., `["*.py", "*.md"]`). If `None`, indexes all files with supported extensions.
+- `db_path` (`str | None`): Optional path to the SQLite database. Defaults to `~/.local/share/embgrep/embgrep.db`.
+
+**Returns**: `dict` with keys:
+- `files_indexed` (`int`): Number of files newly indexed.
+- `chunks_created` (`int`): Number of chunks created.
+- `index_size_mb` (`float`): Database file size in MB.
+
+---
+
+#### `embgrep.search(query, top_k=5, path_filter=None, db_path=None) -> list[SearchResult]`
+
+Semantic search across indexed files.
+
+**Parameters**:
+- `query` (`str`): Natural language search query.
+- `top_k` (`int`): Number of results to return. Default: `5`.
+- `path_filter` (`str | None`): Optional SQL LIKE pattern to filter by file path (e.g., `"%.py"`).
+- `db_path` (`str | None`): Optional path to the SQLite database.
+
+**Returns**: `list[SearchResult]` sorted by descending similarity score.
+
+---
+
+#### `embgrep.status(db_path=None) -> IndexStatus`
+
+Get index statistics.
+
+**Parameters**:
+- `db_path` (`str | None`): Optional path to the SQLite database.
+
+**Returns**: `IndexStatus` dataclass.
+
+---
+
+#### `embgrep.update(db_path=None) -> dict`
+
+Incremental update — re-index changed files only.
+
+**Parameters**:
+- `db_path` (`str | None`): Optional path to the SQLite database.
+
+**Returns**: `dict` with keys:
+- `updated_files` (`int`): Number of files re-indexed.
+- `new_chunks` (`int`): Number of new chunks created from updated files.
+- `removed_files` (`int`): Number of deleted files removed from the index.
+
+---
+
+### Class: `EmbGrep`
+
+Main orchestrator for embedding-powered file search.
+
+#### `EmbGrep(db_path="~/.local/share/embgrep/embgrep.db", model="BAAI/bge-small-en-v1.5")`
+
+**Constructor Parameters**:
+- `db_path` (`str`): Path to the SQLite database file. Default: `"~/.local/share/embgrep/embgrep.db"`. The `~` is expanded automatically. Parent directories are created if they do not exist.
+- `model` (`str`): Name of the fastembed model to use. Default: `"BAAI/bge-small-en-v1.5"` (384-dimensional embeddings). The ONNX model is downloaded and loaded lazily on first embed call.
+
+#### `EmbGrep.index(directory, patterns=None) -> dict`
+
+Index files in a directory.
+
+**Parameters**:
+- `directory` (`str`): Path to the directory to index. Must exist and be a directory.
+- `patterns` (`list[str] | None`): Optional list of glob patterns to filter files (e.g., `["*.py", "*.md"]`). If `None`, collects all files with supported extensions.
+
+**Returns**: `dict` with keys:
+- `files_indexed` (`int`): Number of files newly indexed (unchanged files are skipped).
+- `chunks_created` (`int`): Number of chunks created.
+- `index_size_mb` (`float`): Database file size in MB (rounded to 2 decimal places).
+
+**Raises**: `FileNotFoundError` if `directory` does not exist.
+
+**Behavior**: Skips files whose SHA-256 hash matches the stored hash (already indexed and unchanged). If a file has changed, removes old chunks and re-indexes.
+
+---
+
+#### `EmbGrep.search(query, top_k=5, path_filter=None) -> list[SearchResult]`
+
+Semantic search across indexed chunks.
+
+**Parameters**:
+- `query` (`str`): Natural language search query.
+- `top_k` (`int`): Number of top results to return. Default: `5`.
+- `path_filter` (`str | None`): Optional SQL LIKE pattern to filter by file path (e.g., `"%.py"` for Python files, `"%/src/%"` for files in src directories).
+
+**Returns**: `list[SearchResult]` sorted by descending cosine similarity score. Returns empty list if no chunks exist.
+
+---
+
+#### `EmbGrep.update() -> dict`
+
+Incremental update — re-index changed files, remove deleted files.
+
+**Parameters**: None.
+
+**Returns**: `dict` with keys:
+- `updated_files` (`int`): Number of files re-indexed due to content change.
+- `new_chunks` (`int`): Number of new chunks created from updated files.
+- `removed_files` (`int`): Number of files removed from the index because they no longer exist on disk.
+
+---
+
+#### `EmbGrep.status() -> IndexStatus`
+
+Get current index statistics.
+
+**Parameters**: None.
+
+**Returns**: `IndexStatus` dataclass.
+
+---
+
+#### `EmbGrep.close() -> None`
+
+Close the database connection. Must be called when done to release the SQLite connection.
+
+---
+
+### Dataclass: `SearchResult`
+
+A single search result with file location and similarity score.
+
+**Fields**:
+- `file_path` (`str`): Absolute path to the source file.
+- `chunk_text` (`str`): Full text content of the matching chunk.
+- `score` (`float`): Cosine similarity score (0.0 to 1.0, higher is more similar).
+- `line_start` (`int`): 1-based starting line number in the source file.
+- `line_end` (`int`): Ending line number in the source file.
+
+---
+
+### Dataclass: `IndexStatus`
+
+Statistics about the current embgrep index.
+
+**Fields**:
+- `total_files` (`int`): Number of indexed files.
+- `total_chunks` (`int`): Number of stored chunks.
+- `last_updated` (`str`): ISO timestamp of the most recent indexing operation, or `"never"` if the index is empty.
+- `index_size_mb` (`float`): Database file size in MB (rounded to 2 decimal places).
+
+---
+
+### Internal: `Embedder`
+
+Wrapper around fastembed `TextEmbedding` with lazy initialization.
+
+#### `Embedder(model="BAAI/bge-small-en-v1.5")`
+
+**Parameters**:
+- `model` (`str`): Name of the fastembed model.
+
+#### `Embedder.embed(texts) -> list[numpy.ndarray]`
+
+Embed a list of texts.
+
+**Parameters**:
+- `texts` (`list[str]`): List of text strings to embed.
+
+**Returns**: `list[numpy.ndarray]`, each of shape `(384,)` with dtype `float32`. Returns empty list if `texts` is empty.
+
+#### `Embedder.embed_query(query) -> numpy.ndarray`
+
+Embed a single query string.
+
+**Parameters**:
+- `query` (`str`): The query text.
+
+**Returns**: `numpy.ndarray` of shape `(384,)` with dtype `float32`.
+
+---
+
+### Internal: `chunk_file`
+
+#### `chunk_file(file_path, max_chunk_size=1000) -> list[dict]`
+
+Split a file into chunks for embedding.
+
+**Parameters**:
+- `file_path` (`str`): Path to the file to chunk.
+- `max_chunk_size` (`int`): Maximum number of characters per chunk for fixed-size fallback. Default: `1000`.
+
+**Returns**: `list[dict]`, each dict with keys:
+- `text` (`str`): The chunk text content.
+- `line_start` (`int`): 1-based starting line number.
+- `line_end` (`int`): Ending line number.
+
+**Chunking Strategy**:
+- `.py`: Splits by `def`, `class`, `async def` boundaries.
+- `.js`, `.ts`: Splits by `function`, `class`, `export`, `const ... =` boundaries.
+- `.java`: Splits by `public`, `private`, `class` boundaries.
+- `.go`: Splits by `func`, `type` boundaries.
+- `.rs`: Splits by `fn`, `pub fn`, `pub struct`, `struct`, `impl`, `pub impl` boundaries.
+- `.md`: Splits by heading boundaries (`# ` through `###### `).
+- `.txt`: Splits by blank-line paragraph groups.
+- Others (`.yaml`, `.json`, `.toml`, `.cfg`, `.ini`, `.sh`, `.bash`): Fixed-size character splitting.
+- Empty chunks are filtered out. Files that cannot be read as UTF-8 fall back to latin-1.
+
+---
+
+### Internal: `Database`
+
+SQLite database wrapper for embgrep index storage.
+
+#### `Database(db_path="~/.local/share/embgrep/embgrep.db")`
+
+**Parameters**:
+- `db_path` (`str`): Path to the SQLite database file.
+
+**Behavior**: Creates parent directories if needed. Enables WAL journal mode and foreign key enforcement. Creates `indexed_files` and `chunks` tables with indexes on `file_id` and `file_path`.
+
+**Schema**:
+```sql
+CREATE TABLE indexed_files (
+    id INTEGER PRIMARY KEY,
+    file_path TEXT UNIQUE NOT NULL,
+    file_hash TEXT NOT NULL,
+    indexed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    chunk_count INTEGER DEFAULT 0
+);
+
+CREATE TABLE chunks (
+    id INTEGER PRIMARY KEY,
+    file_id INTEGER NOT NULL,
+    chunk_text TEXT NOT NULL,
+    line_start INTEGER NOT NULL,
+    line_end INTEGER NOT NULL,
+    embedding BLOB NOT NULL,
+    FOREIGN KEY (file_id) REFERENCES indexed_files(id) ON DELETE CASCADE
+);
+```
+
+---
+
+### MCP Server Tools
+
+The MCP server exposes 4 tools via FastMCP with stdio transport. Server name: `"embgrep"`.
+
+#### Tool: `index_directory(path, patterns="*.md,*.py,*.txt") -> str`
+
+Index files in a directory for semantic search.
+
+**Parameters**:
+- `path` (`str`): Directory path to index.
+- `patterns` (`str`): Comma-separated glob patterns. Default: `"*.md,*.py,*.txt"`.
+
+**Returns**: JSON string with `files_indexed`, `chunks_created`, `index_size_mb`.
+
+---
+
+#### Tool: `semantic_search(query, top_k=5, path_filter=None) -> str`
+
+Search indexed files using natural language.
+
+**Parameters**:
+- `query` (`str`): Natural language search query.
+- `top_k` (`int`): Number of results to return. Default: `5`.
+- `path_filter` (`str | None`): Optional SQL LIKE pattern to filter by file path.
+
+**Returns**: JSON string with array of objects, each containing:
+- `file_path` (`str`)
+- `score` (`float`, rounded to 4 decimal places)
+- `line_start` (`int`)
+- `line_end` (`int`)
+- `chunk_text` (`str`, truncated to 500 characters)
+
+---
+
+#### Tool: `index_status() -> str`
+
+Get current index statistics.
+
+**Returns**: JSON string with `total_files`, `total_chunks`, `last_updated`, `index_size_mb`.
+
+---
+
+#### Tool: `update_index() -> str`
+
+Incremental update — re-index changed files only (hash comparison).
+
+**Returns**: JSON string with `updated_files`, `new_chunks`, `removed_files`.
+
+---
+
+### CLI Commands
+
+Entry point: `embgrep` (requires `embgrep[cli]`).
+
+#### `embgrep index PATH [OPTIONS]`
+
+Index files in PATH for semantic search.
+
+**Arguments**:
+- `PATH`: Directory path to index (must exist).
+
+**Options**:
+- `--patterns`, `-p` (`str`): Comma-separated glob patterns (e.g., `"*.md,*.py"`).
+- `--db-path` (`str`): Path to SQLite database.
+- `--model` (`str`): Embedding model name. Default: `"BAAI/bge-small-en-v1.5"`.
+
+---
+
+#### `embgrep search QUERY [OPTIONS]`
+
+Semantic search across indexed files.
+
+**Arguments**:
+- `QUERY`: Natural language search query.
+
+**Options**:
+- `--top-k`, `-k` (`int`): Number of results to return. Default: `5`.
+- `--path-filter`, `-f` (`str`): SQL LIKE pattern for file path filter.
+- `--db-path` (`str`): Path to SQLite database.
+- `--model` (`str`): Embedding model name. Default: `"BAAI/bge-small-en-v1.5"`.
+
+---
+
+#### `embgrep status [OPTIONS]`
+
+Show index statistics.
+
+**Options**:
+- `--db-path` (`str`): Path to SQLite database.
+
+---
+
+#### `embgrep update [OPTIONS]`
+
+Incremental update — re-index changed files only.
+
+**Options**:
+- `--db-path` (`str`): Path to SQLite database.
+- `--model` (`str`): Embedding model name. Default: `"BAAI/bge-small-en-v1.5"`.
+
+---
+
+## Configuration
+
+### Default Database Location
+
+`~/.local/share/embgrep/embgrep.db`
+
+Override via the `db_path` parameter (Python API), `--db-path` option (CLI), or by creating an `EmbGrep` instance with a custom path.
+
+### Default Embedding Model
+
+`BAAI/bge-small-en-v1.5` — a 384-dimensional sentence embedding model from fastembed. The ONNX model files are downloaded automatically on first use and cached locally by fastembed.
+
+### SQLite Settings
+
+- Journal mode: WAL (Write-Ahead Logging) for concurrent read access.
+- Foreign keys: enabled for cascade deletes (deleting a file removes its chunks).
+
+### Chunking Configuration
+
+- `max_chunk_size`: 1000 characters (default for fixed-size fallback). Currently not configurable via CLI; adjustable through the `chunk_file()` function directly.
+
+## Examples
+
+### Basic Indexing and Search
+
+```python
+from embgrep import EmbGrep
+
+eg = EmbGrep()
+
+# Index a project directory
+result = eg.index("./my-project", patterns=["*.py", "*.md"])
+print(f"Indexed {result['files_indexed']} files, {result['chunks_created']} chunks")
+# Indexed 42 files, 187 chunks
+
+# Search for error handling patterns
+results = eg.search("how to handle exceptions", top_k=3)
+for r in results:
+    print(f"  {r.file_path}:{r.line_start}-{r.line_end} (score={r.score:.4f})")
+    print(f"  {r.chunk_text[:80]}...")
+    print()
+
+eg.close()
+```
+
+### Using Module-Level Convenience Functions
+
+```python
+import embgrep
+
+# Index
+embgrep.index("./docs", patterns=["*.md", "*.txt"])
+
+# Search
+results = embgrep.search("database migration steps", top_k=10)
+for r in results:
+    print(f"{r.score:.4f}  {r.file_path} L{r.line_start}-{r.line_end}")
+
+# Status
+st = embgrep.status()
+print(f"Files: {st.total_files}, Chunks: {st.total_chunks}, Size: {st.index_size_mb} MB")
+
+# Incremental update
+info = embgrep.update()
+print(f"Updated: {info['updated_files']}, Removed: {info['removed_files']}")
+```
+
+### Custom Database Path
+
+```python
+from embgrep import EmbGrep
+
+# Use a project-local database
+eg = EmbGrep(db_path="./my-project/.embgrep.db")
+eg.index("./my-project/src", patterns=["*.py"])
+results = eg.search("authentication logic")
+eg.close()
+```
+
+### Path Filtering
+
+```python
+from embgrep import EmbGrep
+
+eg = EmbGrep()
+eg.index("./repo", patterns=["*.py", "*.md", "*.yaml"])
+
+# Search only Python files
+py_results = eg.search("retry logic", top_k=5, path_filter="%.py")
+
+# Search only files in a specific subdirectory
+src_results = eg.search("config parsing", top_k=5, path_filter="%/src/%")
+
+# Search only markdown docs
+doc_results = eg.search("API usage", top_k=5, path_filter="%.md")
+
+eg.close()
+```
+
+### Incremental Update Workflow
+
+```python
+from embgrep import EmbGrep
+
+eg = EmbGrep()
+
+# Initial full index
+eg.index("./project")
+
+# ... time passes, files change ...
+
+# Only re-index changed/deleted files
+update_result = eg.update()
+print(f"Updated {update_result['updated_files']} changed files")
+print(f"Created {update_result['new_chunks']} new chunks")
+print(f"Removed {update_result['removed_files']} deleted files")
+
+eg.close()
+```
+
+### CLI Workflow
+
+```bash
+# Index a codebase with specific file types
+embgrep index ./my-project --patterns "*.py,*.js,*.ts,*.md"
+
+# Search with a natural language query
+embgrep search "how to validate user input" -k 10
+
+# Filter search to Python files only
+embgrep search "database connection pooling" -f "%.py"
+
+# Check index statistics
+embgrep status
+
+# After modifying files, run incremental update
+embgrep update
+
+# Use a custom database
+embgrep index ./other-project --db-path ./other.db
+embgrep search "deployment steps" --db-path ./other.db
+
+# Use a different embedding model
+embgrep index ./project --model "BAAI/bge-base-en-v1.5"
+```
+
+### MCP Server Configuration
+
+Add to your MCP client configuration (e.g., Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "embgrep": {
+      "command": "embgrep-mcp",
+      "transport": "stdio"
+    }
+  }
+}
+```
+
+Or if installed in a virtualenv:
+
+```json
+{
+  "mcpServers": {
+    "embgrep": {
+      "command": "/path/to/venv/bin/embgrep-mcp",
+      "transport": "stdio"
+    }
+  }
+}
+```
+
+### Integration with Other Tools
+
+```python
+# Use embgrep as a retrieval backend for RAG pipelines
+from embgrep import EmbGrep
+
+eg = EmbGrep(db_path="./knowledge-base.db")
+
+# Index your knowledge base
+eg.index("./documents", patterns=["*.md", "*.txt"])
+
+# Retrieve relevant context for a query
+def retrieve_context(query: str, top_k: int = 3) -> str:
+    results = eg.search(query, top_k=top_k)
+    return "\n\n---\n\n".join(
+        f"[{r.file_path}:{r.line_start}-{r.line_end}]\n{r.chunk_text}"
+        for r in results
+    )
+
+context = retrieve_context("What are the deployment prerequisites?")
+# Pass context to your LLM prompt
+```
+
+## Links
+
+- Docs: https://github.com/QuartzUnit/embgrep
+- PyPI: https://pypi.org/project/embgrep/
+- Source: https://github.com/QuartzUnit/embgrep
