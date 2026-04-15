@@ -31,6 +31,9 @@ dev = ["pytest>=8.0", "ruff>=0.8"]
 [project.urls]
 Homepage = "https://github.com/QuartzUnit/embgrep"
 Repository = "https://github.com/QuartzUnit/embgrep"
+Issues = "https://github.com/QuartzUnit/embgrep/issues"
+Documentation = "https://github.com/QuartzUnit/embgrep#readme"
+Changelog = "https://github.com/QuartzUnit/embgrep/releases"
 
 [project.scripts]
 embgrep = "embgrep.__main__:main"
